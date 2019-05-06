@@ -164,21 +164,15 @@ class CustomTensorBoard(tf.keras.callbacks.TensorBoard):
 
 def initializer_callback(train_iter, val_iter):
     kwargs = {}
-    if is_v1:
-        sess = tf.keras.backend.get_session()
-        train_initializer = train_iter.initializer
-        val_initializer = val_iter.initializer
-        initializers = [train_initializer, val_initializer]
 
-        kwargs['on_epoch_begin'] = lambda _, __: sess.run(train_initializer)
-        kwargs['on_epoch_end'] = lambda _, __: sess.run(val_initializer)
-        kwargs['on_train_begin'] = lambda _: sess.run(initializers)
-    else:
-        kwargs['on_epoch_begin'] = lambda _, __: train_iter.initializer
-        kwargs['on_epoch_end'] = lambda _, __: val_iter.initializer
-        kwargs['on_train_begin'] = \
-            lambda _: [train_iter.initializer, val_iter.initializer]
+    sess = tf.compat.v1.keras.backend.get_session()
+    train_initializer = train_iter.initializer
+    val_initializer = val_iter.initializer
+    initializers = [train_initializer, val_initializer]
 
+    kwargs['on_epoch_begin'] = lambda _, __: sess.run(train_initializer)
+    kwargs['on_epoch_end'] = lambda _, __: sess.run(val_initializer)
+    kwargs['on_train_begin'] = lambda _: sess.run(initializers)
     return tf.keras.callbacks.LambdaCallback(**kwargs)
 
 
