@@ -40,7 +40,7 @@ The first epoch or two will normally have terrible evaluation loss/accuracy. Thi
 
 ## Theory
 
-See [this draft paper](TODO - google drive upload/link) for an overview of the theory associated with the operations.
+See [this paper](https://drive.google.com/open?id=1VxAnRMcPhovMwqpY1Z9iYsOS8pjvdLFw) for a basic overview of the theory associated with the operations.
 
 ## Python/Tensorflow Compatibility
 
