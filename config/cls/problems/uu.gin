@@ -1,0 +1,8 @@
+tfds_builder = @get_uniform_uniform_builder()
+train/augment_cloud.sample_prob = 0.5
+
+val/augment_cloud.sample_prob = None
+val/augment_cloud.take_first_n = 1024
+val/augment_cloud.rotate = None
+val/augment_cloud.jitter_positions = None
+val/augment_cloud.jitter_normals = None

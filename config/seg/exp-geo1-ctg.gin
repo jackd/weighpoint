@@ -1,0 +1,21 @@
+include 'base.gin'
+
+batch_size = 32
+
+scale_coords = False
+
+filters = (32, 64, 128, 256, 512)
+
+global_units = 1024
+
+obj_class_embedding_dim = 64
+
+convolver = @ExpandingConvolver()
+
+include '../poly.gin'
+poly = 'geo'
+polynomial_transformer.max_order = 1
+
+include '../ctg.gin'
+
+r0 = 0.1

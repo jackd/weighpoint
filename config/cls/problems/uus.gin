@@ -1,0 +1,5 @@
+# like uu but based on pointnet++ presampled data
+tfds_builder = @get_uus_builder()
+train/augment_cloud.sample_prob = 0.1024
+val/augment_cloud.sample_prob = None
+val/augment_cloud.take_first_n = 1024

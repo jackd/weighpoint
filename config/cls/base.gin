@@ -1,0 +1,51 @@
+import weighpoint.data.modelnet
+import weighpoint.models.cls
+include '../base.gin'
+
+model_dir.base_directory = '~/weighpoint/cls'
+
+logits_meta_fn = @cls_logits
+problem = @ModelnetProblem()
+ModelnetProblem.map_fn = {
+    'train': @train/augment_cloud,
+    'validation': @val/augment_cloud,
+}
+ModelnetProblem.tfds_builder = %tfds_builder
+
+cls_head.query_fn = @query_pairs
+cls_head.radii_fn = %radii_fn
+cls_head.convolver = %convolver
+cls_head.coords_transform = %coords_transform
+cls_head.weights_transform = %weights_transform
+cls_head.r0 = %r0
+cls_head.global_units = %global_units
+cls_head.initial_filters = %initial_filters
+
+convolver = @ExpandingConvolver()
+ExpandingConvolver.activation = @cls_head_activation
+
+r0 = 0.1
+global_units = 'combined'
+initial_filters = 16
+
+
+
+### Template
+## Required
+# tfds_builder - see problems subdir
+# convolver = @ExpandingConvolver() | @NetworkConvolver()
+# coords_transform - e.g.
+## include '../poly.gin'
+## poly = 'leg'
+# weights_transform & radii_fn - e.g. include ('../ctg.gin' | '../ctgf.gin')
+
+## Also consider:
+# cls_tail.hidden_units = ()
+# cls_tail.activation = None
+
+## Optional
+# layers.Dense.kernel_constraint = @constraints.WeightDecay()
+# constraints.WeightDecay.decay = 1e-3
+#
+# layers.Dense.kernel_regularizer = @tf.keras.regularizers.l2()
+# tf.keras.regularizers.l2.l = 5e-4

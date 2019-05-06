@@ -1,0 +1,2 @@
+weights_transform = @ctg_transformer()
+radii_fn = @constant_radii

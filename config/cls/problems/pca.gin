@@ -1,0 +1,5 @@
+# clouds are rotated such that the princ. comp of xy is aligned with x axis
+# should be used in conjunction with one of the others
+rotate.angle = 'pca-xy'
+train/augment_cloud.rotate = @rotate
+val/augment_cloud.rotate = @rotate

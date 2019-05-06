@@ -1,0 +1,52 @@
+import weighpoint.keras_configurables
+import weighpoint.data.augment
+import weighpoint.data.problems
+import weighpoint.data.shapenet_part
+import weighpoint.models.core
+import weighpoint.models.convolvers
+import weighpoint.models.transformers
+import weighpoint.ops.polynomials
+import weighpoint.runners
+
+train.problem = %problem
+train.optimizer = @optimizer()
+train.checkpoint_freq = 10
+train.summary_freq = 320
+train.batch_size = %batch_size
+train.epochs = %epochs
+train.model_dir = @model_dir()
+train.logits_meta_fn = %logits_meta_fn
+
+evaluate.problem = %problem
+evaluate.optimizer = @optimizer()
+evaluate.model_dir = @model_dir()
+evaluate.batch_size = %batch_size
+evaluate.logits_meta_fn = %logits_meta_fn
+
+polynomial_transformer.scale_coords = %scale_coords
+lde_transformer.scale_coords = %scale_coords
+
+NetworkConvolver.local_network_fn = @local/simple_mlp
+NetworkConvolver.global_network_fn = @global/simple_mlp
+
+batch_sizr = 32
+scale_coords = False
+epochs = 100
+
+### Template
+
+## Required
+# model_dir.base_directory = '~/weighpoint/subdir'
+# logits_meta_fn =
+# problem =
+
+## Key configurables
+# optimizer
+## mlp
+
+## Regularizers
+# layers.Dense.kernel_constraint = @constraints.WeightDecay()
+# constraints.WeightDecay.decay =
+#
+# layers.Dense.kernel_regularizer = @tf.keras.regularizers.l2()
+# tf.keras.regularizers.l2.l =

@@ -1,0 +1,48 @@
+import weighpoint.models.seg
+import weighpoint.data.shapenet_part
+include '../base.gin'
+
+model_dir.base_directory = '~/weighpoint/seg'
+
+problem = @ShapenetPartProblem()
+ShapenetPartProblem.map_fn = %map_fn
+map_fn = {
+    'train': @train/augment_cloud,
+    'validation': @val/augment_cloud,
+}
+train/augment_cloud.rotate = None
+val/augment_cloud.rotate = None
+val/augment_cloud.jitter_positions = None
+val/augment_cloud.jitter_normals = None
+
+logits_meta_fn = @segmentation_logits
+
+segmentation_logits.filters = %filters
+segmentation_logits.global_units = %global_units
+segmentation_logits.query_fn = %query_fn
+segmentation_logits.radii_fn = %radii_fn
+segmentation_logits.convolver = %convolver
+segmentation_logits.coords_transform = %coords_transform
+segmentation_logits.weights_transform = %weights_transform
+segmentation_logits.r0 = %r0
+
+query_fn = @query_pairs
+ExpandingConvolver.activation = @seg_activation
+
+## Template
+# filters = (32, 64, 128, 256, 512)
+# global_units = 1024 | 'combined'
+
+# convolver = @ExpandingConvolver()
+# coords_transform - e.g.
+## include '../poly.gin'
+## poly = 'leg'
+# weights_transform & radii_fn - e.g. include ('../ctg.gin' | '../ctgf.gin')
+
+# r0 = 0.1
+## Optional
+# layers.Dense.kernel_constraint = @constraints.WeightDecay()
+# constraints.WeightDecay.decay =
+#
+# layers.Dense.kernel_regularizer = @tf.keras.regularizers.l2()
+# tf.keras.regularizers.l2.l =

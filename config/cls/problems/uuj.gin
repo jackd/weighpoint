@@ -1,0 +1,7 @@
+# like uu but with double positional jitter, no normal jitter
+include 'problems/uu.gin'
+
+train/augment_cloud.jitter_normals = None
+train/augment_cloud.jitter_positions = @train/jitter_positions
+train/jitter_positions.stddev = 0.02
+train/jitter_positions.clip = None

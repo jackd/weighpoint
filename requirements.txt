@@ -1,0 +1,4 @@
+scipy
+sklearn
+git+git://github.com/jackd/gin-config@tf2
+git+git://github.com/jackd/datasets@modelnet

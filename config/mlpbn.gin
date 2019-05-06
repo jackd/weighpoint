@@ -1,0 +1,8 @@
+# network convolver with batch normalization
+convolver = @NetworkConvolver()
+local/simple_mlp.hidden_activation = %convolver_activation
+local/simple_mlp.final_activation = %convolver_activation
+global/simple_mlp.hidden_activation = %convolver_activation
+global/simple_mlp.final_activation = %convolver_activation
+
+convolver_activation = @relu_batch_norm
