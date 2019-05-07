@@ -2,10 +2,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from absl import logging
 import tensorflow as tf
 import gin.tf
 from weighpoint.tf_compat import is_v1
 import os
+import time
 
 GinConfigSaverCallback = gin.config.external_configurable(
     gin.tf.GinConfigSaverCallback)
@@ -88,18 +90,31 @@ class CheckpointManagerCallback(tf.keras.callbacks.Callback):
     model.fit(..., callbacks=[callbacks])
     ```
     """
-    def __init__(self, checkpoint, manager, period=1, save_on_train_end=True):
-        if is_v1:
-            raise RuntimeError(
-                'CheckpointManagerCallback is not usable in tensorflow v1 - '
-                'see SaverCallback for substitute')
-        self._manager = manager
-        self._checkpoint = checkpoint
+    def __init__(
+            self, model_dir, period=1, save_on_train_end=True,
+            **manager_kwargs):
+        self._model_dir = model_dir
         self._period = period
         self._save_on_train_end = save_on_train_end
+        self._manager_kwargs = manager_kwargs
         self._restored = False
+        self._manager = None
+        self._checkpoint = None
         self._epoch_count = None
         self._last_save = None
+
+    @property
+    def manager(self):
+        if self._manager is None:
+            self._manager = tf.train.CheckpointManager(
+                self.checkpoint, self._model_dir, **self._manager_kwargs)
+        return self._manager
+
+    @property
+    def checkpoint(self):
+        if self._checkpoint is None:
+            self._checkpoint = tf.train.Checkpoint(model=self.model)
+        return self._checkpoint
 
     def _on_begin(self):
         if not self._restored:
@@ -107,8 +122,8 @@ class CheckpointManagerCallback(tf.keras.callbacks.Callback):
 
     def restore(self, save_path=None):
         if save_path is None:
-            save_path = self._manager.latest_checkpoint
-        self._checkpoint.restore(save_path)
+            save_path = self.manager.latest_checkpoint
+        self.checkpoint.restore(save_path)
         self._restored = True
 
     def on_train_begin(self, logs=None):
@@ -134,7 +149,7 @@ class CheckpointManagerCallback(tf.keras.callbacks.Callback):
         if self._epoch_count is None:
             return
         if self._last_save != self._epoch_count:
-            self._manager.save(self._epoch_count)
+            self.manager.save(self._epoch_count)
             self._last_save = self._epoch_count
 
 
@@ -183,6 +198,27 @@ def exponential_decay_lr_schedule(lr0, factor):
     return f
 
 
+# class _CustomCheckpointManager(tf.train.CheckpointManager):
+#     """Resolves issues with the base class in 2.0 in graph mode."""
+#     def save(self, checkpoint_number=None):
+#         if checkpoint_number is None:
+#             raise ValueError(
+#                 '_CustomCheckpointManager.save requires a checkpoint_number '
+#                 'on save')
+#         prefix = "%s-%d" % (self._prefix, checkpoint_number)
+#         save_path = self._checkpoint.write(prefix)
+#         timestamp = time.time()
+#         # If this is an overwritten checkpoint we were previously tracking,
+#         # delete and reinsert it to make sure it goes to the end of the queue
+#         if save_path in self._maybe_delete:
+#             del self._maybe_delete[save_path]
+#         self._maybe_delete[save_path] = timestamp
+#         self._latest_checkpoint = save_path
+#         self._sweep()
+#         self._record_state()
+#         return save_path
+
+
 def get_callbacks(
         model,
         callbacks=None,
@@ -203,26 +239,38 @@ def get_callbacks(
 
     initial_epoch = 0
     if checkpoint_freq is not None:
-        checkpoint = tf.train.Checkpoint(
-                optimizer=model.optimizer, model=model)
-        manager = tf.train.CheckpointManager(
-            checkpoint, model_dir, max_to_keep=5)
-        saver_callback = CheckpointManagerCallback(
-            checkpoint, manager, period=checkpoint_freq)
-        chkpt = manager.latest_checkpoint
-        if chkpt is not None:
-            for substr in chkpt.split('.')[-1::-1]:
-                try:
-                    last_step = int(substr)
-                    assert(last_step % train_steps_per_epoch == 0)
-                    initial_epoch = last_step // train_steps_per_epoch
-                    break
-                except Exception:
-                    pass
-            else:
-                raise RuntimeError('Unrecognized checkpoint prefix %s' % chkpt)
+        if is_v1:
+            saver_callback = SaverCallback(
+                model_dir, train_steps_per_epoch,
+                checkpoint_freq=checkpoint_freq)
+            callbacks.append(saver_callback)
+        else:
+            # v2
+            logging.warning('Checkpointing not implemented in tf 2.0')
+            ## `model.get_config()` raises in 2.0...
+            # checkpoint_path = os.path.join(model_dir, 'cp-{epoch:04d}.ckpt')
+            # saver_callback = tf.keras.callbacks.ModelCheckpoint(
+            #     checkpoint_path, verbose=1, period=checkpoint_freq)
+            # for fp in os.listdir(model_dir):
+            #     if fp.startswith('cp-'):
+            #         initial_epoch = max(initial_epoch, int(fp[3:7]))
 
-        callbacks.append(saver_callback)
+            ## Issues in the following related to ListWrappers/Checkpointable?
+            # saver_callback = CheckpointManagerCallback(
+            #     model_dir, period=checkpoint_freq, max_to_keep=5)
+            # chkpt = manager.latest_checkpoint
+            # if chkpt is not None:
+            #     for substr in chkpt.split('.')[-1::-1]:
+            #         try:
+            #             last_step = int(substr)
+            #             assert(last_step % train_steps_per_epoch == 0)
+            #             initial_epoch = last_step // train_steps_per_epoch
+            #             break
+            #         except Exception:
+            #             pass
+            #     else:
+            #         raise RuntimeError(
+            #             'Unrecognized checkpoint prefix %s' % chkpt)
 
     if summary_freq:
         kwargs = dict(
@@ -232,6 +280,7 @@ def get_callbacks(
         else:
             tb_callback = CustomTensorBoard(
                 custom_summary=custom_summary, **kwargs)
+
         if train_steps_per_epoch is not None:
             initial_train_steps = initial_epoch*train_steps_per_epoch
             tb_callback._total_batches_seen = initial_train_steps
@@ -251,4 +300,6 @@ def get_callbacks(
     assert((train_iter is None) == (val_iter is None))
     if not any(it is None for it in (train_iter, val_iter)):
         callbacks.append(initializer_callback(train_iter, val_iter))
+
+
     return callbacks, initial_epoch
