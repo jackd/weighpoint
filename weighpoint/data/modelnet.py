@@ -250,16 +250,44 @@ class ModelnetProblem(problems.TfdsProblem):
             metrics=(tf.keras.metrics.SparseCategoricalAccuracy(),),
             map_fn=None, as_supervised=True,
             shuffle_buffer=1024, download_and_prepare=True,
-            min_points=256):
+            min_points=256, alt_split_percent=None):
         if loss is None:
             loss = SparseCategoricalCrossentropy(from_logits=True)
         self._min_points = min_points
+        self._alt_split_percent = alt_split_percent
         super(ModelnetProblem, self).__init__(
             builder=tfds_builder, loss=loss, metrics=metrics,
             map_fn=map_fn, as_supervised=as_supervised,
             shuffle_buffer=shuffle_buffer,
             download_and_prepare=download_and_prepare,
         )
+
+    def _split(self, split):
+        if self._alt_split_percent is None:
+            return super(ModelnetProblem, self)._split(split)
+        total = tfds.Split.TRAIN + tfds.Split.TEST
+        if split == 'train':
+            return total.subsplit(tfds.percent[self._alt_split_percent:])
+        elif split == 'validation':
+            return total.subsplit(tfds.percent[:self._alt_split_percent])
+        else:
+            raise NotImplementedError
+
+    def examples_per_epoch(self, split='train'):
+        def base(split):
+            return int(self.builder.info.splits[split].num_examples)
+
+        if self._alt_split_percent is None:
+            return base('test' if split == 'validation' else split)
+
+        total = sum(base(s) for s in ('train', 'test'))
+        frac = float(self._alt_split_percent) / 100
+        if split == 'train':
+            return int((1 - frac)*total)
+        elif split == 'validation':
+            return int(frac*total)
+        else:
+            raise NotImplementedError
 
     def data_pipeline(self, dataset, split, batch_size, prefetch=True):
         if self._min_points is not None and self._min_points > 0:
@@ -270,7 +298,7 @@ class ModelnetProblem(problems.TfdsProblem):
         if isinstance(map_fn, dict):
             map_fn = map_fn[split]
         # if split == tfds.Split.TRAIN:
-        dataset = dataset.repeat().shuffle(self._shuffle_buffer)
+        dataset = dataset.shuffle(self._shuffle_buffer)
         if map_fn is None:
             def map_fn(inputs, labels):
                 return {k: inputs[k] for k in ('positions', 'normals')}, labels

@@ -112,7 +112,7 @@ class TfdsProblem(Problem):
         return self.data_pipeline(
             dataset, split, batch_size, prefetch=prefetch)
 
-    def examples_per_epoch(self, split=tfds.Split.TRAIN):
+    def examples_per_epoch(self, split='train'):
         return int(self.builder.info.splits[self._split(split)].num_examples)
 
     @property
@@ -124,9 +124,9 @@ class TfdsProblem(Problem):
         return list(self._metrics)
 
     def _split(self, split):
-        if (split == tfds.Split.VALIDATION and
-                split not in self.builder.info.splits):
-            split = tfds.Split.TEST
+        if (split == 'validation' and
+                tfds.Split.VALIDATION not in self.builder.info.splits):
+            split = 'test'
         return split
 
     def data_pipeline(self, dataset, split, batch_size, prefetch=True):
@@ -135,7 +135,7 @@ class TfdsProblem(Problem):
             map_fn = map_fn[split]
 
         if split == tfds.Split.TRAIN:
-            dataset = dataset.repeat().shuffle(self._shuffle_buffer)
+            dataset = dataset.shuffle(self._shuffle_buffer)
 
         if map_fn is not None:
             dataset = dataset.map(
