@@ -1,3 +1,14 @@
+"""
+Classes implementing various difference convolution strategies.
+
+See `Convolver` for the interface to be implemented and method docstrings.
+
+`ExpandingConvolver` and `NetworkConvolver` implement convolutions according
+to depthwise expansion and MLP networks respectively.
+
+`ResnetConvolver` takes a base `Convolver` and applies the relevant
+convolution operation in Resnet-inspired blocks.
+"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -11,20 +22,65 @@ from weighpoint.layers import utils
 
 
 class Convolver(object):
+    """Abstract base class defining the different types of convolutions."""
     @abc.abstractmethod
     def in_place_conv(
             self, features, coord_features, batched_neighbors, filters_out,
             weights):
+        """
+        Perform an in-place/stationary convolution.
+
+        i.e. one where the input cloud is the same as the output cloud.
+
+        Args:
+            features: [N, filters_in] float32 array of flattened batched point
+                features.
+            coord_features: [B, n?, k?, coord_filters] float32 possibly ragged
+                tensor of relative coordinate features.
+            batched_neighbors: [B, n?, k?] (num_elements == E) possibly ragged
+                tensor of indices defining neighborhoods of each point in the
+                batched clouds.
+            filters_out: number of output filters
+            weights: None or [B, n?, k?, 1] float32 array of weights for each
+                neighborhood relationship.
+
+        Returns:
+            [N, filters_out] flattened batched output features
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def resample_conv(
             self, features, coord_features, batched_neighbors, filters_out,
             weights):
+        """
+        Perform a resampling convolution.
+
+        i.e. one where the output cloud is different to the input cloud.
+        Strictly speaking doesn't have to be a resampling, though generally is.
+
+        Only difference with `in_place_conv` is the output filters are of a
+        different size to the inputs (according to the number of points in the
+        input/output clouds).
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def global_conv(self, features, coord_features, row_splits, filters_out):
+        """
+        Perform a global point cloud convolution.
+
+        Args:
+            features: [N, filters_in] flattened float32 array of point features
+            coord_features: [B, n?, coord_filters] possibly ragged float32
+                array of coordinate features, num_flat_elements == N
+            row_splits: do we need this?
+                Can we not use coord_features.row_splits? TODO
+            filters out: number of output filters
+
+        Returns:
+            [B, filters_out] float32 global features.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -35,6 +91,18 @@ class Convolver(object):
 
 @gin.configurable
 class ExpandingConvolver(Convolver):
+    """
+    `ExpandingConvolver`s convolve in 3 stages.
+
+    1. Expansion: perform a pointwise flattened cartesian product on point
+        features and coord features. For `pf_in` input feature filters and
+        `cf_in` input coordinate features, this results in `pf_in * cf_in`
+        filters for each neighborhood relationship
+    2. Integral: sum over all neighbors for each point.
+    3. Filter reduction: perform a pointwise convolution (Dense layer) on each
+        point. This generally decreases the filter count from `pf_in * cf_in`
+        to something more amenable for subsequent convolutions.
+    """
     def __init__(self, activation=None, global_activation=None):
         self._activation = activation
         self._global_activation = global_activation
@@ -86,9 +154,13 @@ class ExpandingConvolver(Convolver):
 
 @gin.configurable
 class ResnetConvolver(Convolver):
-    # based on
-    # https://github.com/keras-team/keras-applications/blob/master/'
-    # 'keras_applications/resnet50.py
+    """
+    Takes a base convolver and performs base operations in resnet-like blocks.
+
+    Based on
+    https://github.com/keras-team/keras-applications/blob/master/'
+    'keras_applications/resnet50.py
+    """
     def __init__(
             self, base_convolver=None, activation=tf.nn.relu, combine='add'):
         if base_convolver is None:
@@ -176,6 +248,20 @@ def simple_mlp(
         x, filters_out, n_hidden=1, filters_hidden=None,
         hidden_activation='relu',
         final_activation='relu'):
+    """
+    Simple multi-layer perceptron model.
+
+    Args:
+        x: [N, filters_in] float32 input features
+        filters_out: python int, number of output filters
+        n_hidden: python int, number of hidden layers
+        filters_hidden: python int, number of filters in each hidden layer
+        hidden_activation: activation applied at each hidden layer
+        final_activation: activation applied at the end
+
+    Returns:
+        [N, filters_out] float32 output features
+    """
     if filters_hidden is None:
         filters_hidden = x.shape[-1]
     hidden_activation = _activation(hidden_activation)
@@ -189,6 +275,12 @@ def simple_mlp(
 
 @gin.configurable
 class NetworkConvolver(Convolver):
+    """
+    NetworkConvolvers use `weighpoint.layers.conv.mlp_edge_conv`s.
+
+    These concatenate node features with relative coordinate features before
+    passing them through an MLP. This is similar to how pointnet(++) work.
+    """
     def __init__(
             self, local_network_fn=simple_mlp,
             global_network_fn=simple_mlp):

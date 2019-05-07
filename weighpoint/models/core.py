@@ -25,14 +25,28 @@ def model_dir(model_id, base_directory='/tmp'):
 def mlp_layer(
         flat_features, units, activation='relu',
         use_batch_normalization=False,
-        drop_rate=None, init_kernel_scale=1.0):
+        dropout_rate=None, init_kernel_scale=1.0):
+    """
+    Basic multi-layer perceptron layer + call.
+
+    Args:
+        flat_features: [N, units_in] float32 non-ragged float features
+        units: number of output features
+        activation: used in core.Dense
+        dropout_rate: rate used in dropout (no dropout if this is None)
+        use_batch_normalization: applied after dropout if True
+        init_kernel_scale: scale used in kernel_initializer.
+
+    Returns:
+        [N, units] float32 output features
+    """
     kernel_initializer = utils.scaled_glorot_uniform(scale=init_kernel_scale)
     flat_features = core.Dense(
         units, activation=activation,
         use_bias=not use_batch_normalization,
         kernel_initializer=kernel_initializer)(flat_features)
-    if drop_rate is not None:
-        flat_features = core.dropout(flat_features, rate=drop_rate)
+    if dropout_rate is not None:
+        flat_features = core.dropout(flat_features, rate=dropout_rate)
     if use_batch_normalization:
         flat_features = core.batch_norm(
             flat_features, scale=(activation != 'relu'))
@@ -40,55 +54,86 @@ def mlp_layer(
 
 
 @gin.configurable
-def dropout(features, dropout_rate=0.5):
-    if dropout_rate is None:
-        return features
-    return tf.keras.layers.Dropout(dropout_rate)(features)
-
-
-@gin.configurable
 def generalized_activation(
         features, activation='relu', add_bias=False,
         use_batch_normalization=False,
         dropout_rate=None):
+    """
+    Generalized activation to be performed (presumably) after a learned layer.
+
+    Can include (in order)
+        * bias addition;
+        * standard activation;
+        * batch normalization; and/or
+        * dropout.
+    """
     if add_bias and not use_batch_normalization:
         features = bias.add_bias(features)
     features = tf.keras.layers.Lambda(
         tf.keras.activations.get(activation))(features)
     if use_batch_normalization:
         features = core.batch_norm(features)
-    return dropout(features, dropout_rate)
+    return core.dropout(features, dropout_rate)
 
 
-@gin.configurable(whitelist=['max_neighbors'])
+@gin.configurable(whitelist=['max_neighbors', 'sample_rate_reciprocal_offset'])
 def query_pairs(
-        coords, radius, name=None, include_sample_rate=True,
-        max_neighbors=None):
+        coords, radius, name=None, max_neighbors=None,
+        sample_rate_reciprocal_offset=0):
+    """
+    Get neighbors and inverse density sample rates from the provided coords.
+
+    sample_rate is given by
+    sample_rate = 1. / (sum(num_neighbors) - sample_rate_reciprocal_offset)
+
+    Args:
+        coords: [n, num_dims] float32 point cloud coordinates
+        radius: float scalar ball search radius
+        name: used in layers
+        max_neighbors: if not None, neighborhoods are cropped to this size.
+        sample_rate_reciprocal_offset: affects sample rate. Values close to 1
+            result in sparse neighborhoods being selected more frequently
+
+    Returns:
+        neighbors: [n, ?] int32 ragged tensor of neighboring indices
+        sample_rate: sampling rate based roughly on inverse density.
+    """
     neighbors = _q.query_pairs(
         coords, radius, name=name, max_neighbors=max_neighbors)
-    if include_sample_rate:
-        sample_rate = utils.reciprocal(utils.cast(
-                utils.row_lengths(neighbors), tf.float32))
-        return neighbors, sample_rate
-    else:
-        return neighbors
+    sample_rate_reciprocal = utils.cast(
+        utils.row_lengths(neighbors), tf.float32)
+    if sample_rate_reciprocal_offset != 0:
+        sample_rate_reciprocal = utils.lambda_call(
+            tf.math.subtract, sample_rate_reciprocal,
+            sample_rate_reciprocal_offset)
+    sample_rate = utils.reciprocal(sample_rate_reciprocal)
+    return neighbors, sample_rate
 
 
 @gin.configurable(whitelist=['k'])
-def query_knn(coords, radius, name=None, include_sample_rate=True, k=8):
+def query_knn(coords, radius=None, name=None, k=8):
+    """
+    Find the k nearest neighbors of the given point cloud coordinates.
+
+    Args:
+        coords: [n, num_dims] coordinates of point cloud
+        radius: not used - just here to make interface same as query_pairs
+        name: used for debugging
+        k: number of neighbors to find
+
+    Returns:
+        neighbors: [n, k] int64 array of neighbors
+        sample_rate: inverse density sample rate defined as the sum of
+            distances of k nearest neighbors.
+    """
     neighbors, dists = _q.query_knn(coords, k, name=name)
-    if include_sample_rate:
-        if dists is None:
-            sample_rate = None
-        else:
-            sample_rate = utils.reduce_sum(dists, axis=-1)
-        return neighbors, sample_rate
-    else:
-        return neighbors
+    sample_rate = utils.reduce_sum(dists, axis=-1)
+    return neighbors, sample_rate
 
 
 @gin.configurable(blacklist=['num_res'])
 def constant_radii(num_res):
+    """Constant unscaled squared radii."""
     return np.power(4.0, np.arange(num_res)).astype(np.float32)
 
 
@@ -102,6 +147,23 @@ def _rescale_for_budget(radii2, density, budget):
 
 @gin.configurable(blacklist=['num_res'])
 def fixed_budget_radii(num_res):
+    """
+    Learnable unscaled squared radii based on a fixed computational budget.
+
+    The budget assumes point cloud density quarters at each resolution, and
+    aims to keep the sum across all resolutions of the sum of all neighborhood
+    sizes roughly constante. Note there are generally more filters in later
+    resolutions, so the number of floating point operations may increase if the
+    model learns to expand final layer radii at the expense of lower
+    resolutions.
+
+    Args:
+        num_res: number of resolutions.
+
+    Returns:
+        [num_res] float32 tensor of squared unscaled radii values, initially
+        the same as `constant_radii(num_res)`.
+    """
     r20 = constant_radii(num_res)
     radii = utils.variable(
         shape=(num_res,), dtype=tf.float32,
@@ -119,6 +181,33 @@ def fixed_budget_radii(num_res):
 def convolve(
         features, radius2, filters, neighborhood, coords_transform,
         weights_transform, convolver_fn, global_features=None):
+    """
+    Tie together components making up a convolution.
+
+    N_i: sum over batch examples of number of points in input cloud
+    N_o: sum over batch examples of number of points in output cloud
+    B: batch_size
+
+    Args:
+        features: [N_i, filters_in] float32 tensor of flattened batched
+            point features
+        radius2: float32 scalar squared radius value
+        filters: python int, number of filters out
+        neighborhood: `weighpoint.models.neigh.Neighborhood` instance
+        coords_transform: function mapping relative coordinates to coord
+            features
+        weights_transform: function mapping relative coordinates to weights
+        convolver_fn: One of `weighpoint.model.convolvers.Convolver` instance
+            methods
+        global_features: [B, filters] float32 or None. If not None, these are
+            added after the convolution.
+
+    Returns:
+        features: [N_o, filters] float32 array
+        nested_row_splits: row splits of implicit ragged features
+        i.e. the ragged features can be created using
+            `tf.RaggedTensor.from_row_splits(features, nested_row_splits)`
+    """
     rel_coords = neighborhood.rel_coords.flat_values
     offset_batched_neighbors = neighborhood.offset_batched_neighbors
 
@@ -144,6 +233,18 @@ def _add_local_global(args):
 
 
 def add_local_global(local_features, global_features):
+    """
+    Add local and global features.
+
+    Args:
+        local_features: [B, n?, f] float32 possible ragged tensor of point
+            features
+        global_features: None or [B, f] float32 tensor of global features.
+
+    Returns:
+        [B, n?, f] possibly ragged tensor of modified local features. Does
+        no modification if `global_features is None`.
+    """
     if global_features is None:
         return local_features
     assert(global_features.shape[-1] == local_features.shape[-1])

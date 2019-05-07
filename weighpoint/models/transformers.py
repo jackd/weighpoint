@@ -1,3 +1,18 @@
+"""
+Different coordinate transformations.
+
+Each takes an unbatched relative coordinates tensor/squared ball search radius
+and should return a batched transformed model tensor. This allows for the
+transformer to decide what to preprocess and what to include in the main
+network. For example, polynomial transformers do not introduce learned
+parameters so can be computed during preprocessing.
+
+Note maximizing preprocessing can backfire on systems without significant CPU
+resources since high-order polynomial are non-trivial to compute on CPUs but
+are massively accelerated using GPUs. Just because you can, doesn't mean you
+should...
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function

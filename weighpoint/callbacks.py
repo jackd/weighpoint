@@ -7,7 +7,6 @@ import tensorflow as tf
 import gin.tf
 from weighpoint.tf_compat import is_v1
 import os
-import time
 
 GinConfigSaverCallback = gin.config.external_configurable(
     gin.tf.GinConfigSaverCallback)
@@ -46,8 +45,7 @@ class SaverCallback(tf.keras.callbacks.Callback):
             checkpoint = tf.train.latest_checkpoint(self._model_dir)
             if checkpoint is None:
                 return
-        self._saver.restore(
-            tf.keras.backend.get_session(), checkpoint)
+        self._saver.restore(tf.keras.backend.get_session(), checkpoint)
 
     def on_train_begin(self, logs=None):
         self.restore()
@@ -237,17 +235,18 @@ def get_callbacks(
     else:
         callbacks = list(callbacks)
 
-    initial_epoch = 0
     if checkpoint_freq is not None:
         if is_v1:
             saver_callback = SaverCallback(
                 model_dir, train_steps_per_epoch,
                 checkpoint_freq=checkpoint_freq)
             callbacks.append(saver_callback)
+            initial_epoch = saver_callback.last_saved_epoch()
         else:
             # v2
+            initial_epoch = None
             logging.warning('Checkpointing not implemented in tf 2.0')
-            ## `model.get_config()` raises in 2.0...
+            # # `model.get_config()` raises in 2.0...
             # checkpoint_path = os.path.join(model_dir, 'cp-{epoch:04d}.ckpt')
             # saver_callback = tf.keras.callbacks.ModelCheckpoint(
             #     checkpoint_path, verbose=1, period=checkpoint_freq)
@@ -255,7 +254,7 @@ def get_callbacks(
             #     if fp.startswith('cp-'):
             #         initial_epoch = max(initial_epoch, int(fp[3:7]))
 
-            ## Issues in the following related to ListWrappers/Checkpointable?
+            # # Issues in the following related to ListWrappers/Checkpointable?
             # saver_callback = CheckpointManagerCallback(
             #     model_dir, period=checkpoint_freq, max_to_keep=5)
             # chkpt = manager.latest_checkpoint
@@ -271,6 +270,9 @@ def get_callbacks(
             #     else:
             #         raise RuntimeError(
             #             'Unrecognized checkpoint prefix %s' % chkpt)
+
+    if initial_epoch is None:
+        initial_epoch = 0
 
     if summary_freq:
         kwargs = dict(
@@ -300,6 +302,5 @@ def get_callbacks(
     assert((train_iter is None) == (val_iter is None))
     if not any(it is None for it in (train_iter, val_iter)):
         callbacks.append(initializer_callback(train_iter, val_iter))
-
 
     return callbacks, initial_epoch

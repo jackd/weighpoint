@@ -23,13 +23,19 @@ evaluate.model_dir = @model_dir()
 evaluate.batch_size = %batch_size
 evaluate.logits_meta_fn = %logits_meta_fn
 
+confusion.model_dir = @model_dir()
+confusion.batch_size = %batch_size
+confusion.logits_meta_fn = %logits_meta_fn
+confusion.problem = %problem
+
+
 polynomial_transformer.scale_coords = %scale_coords
 lde_transformer.scale_coords = %scale_coords
 
 NetworkConvolver.local_network_fn = @local/simple_mlp
 NetworkConvolver.global_network_fn = @global/simple_mlp
 
-batch_sizr = 32
+batch_size = 32
 scale_coords = False
 epochs = 100
 

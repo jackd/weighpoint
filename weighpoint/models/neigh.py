@@ -1,3 +1,27 @@
+"""
+Uniform interfaces for various different types of neighborhoods.
+
+See `Neighborhood` docstrings for method interpretations.
+
+Neighborhood: generic neighborhood for arbitrary input and output clouds
+
+InPlaceNeighborhood: output point cloud is the same as the input
+
+SampledNeighborhood: output point cloud is a sampling of the input
+
+TransposedNeighborhood: inverse neighborhood, i.e.
+    TransposedNeighborhood(Neighborhood(
+        in_coords, out_coords, neighbors_fn(in_coords, out_coords))) ==
+    Neighborhood(
+        out_coords,in_coords, neighborhood_fn(out_coords, in_coords))
+
+In general, use neighborhood.transpose rather than TransposedNeighborhood
+directly.
+
+All input arguments should be unbatched, and all outputs other than
+`offset_batched_neighbors` are also unbatched.
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -24,18 +48,22 @@ class Neighborhood(object):
 
     @property
     def in_coords(self):
+        """[n_in, num_dims] float32 coordinates of input (unbatched)."""
         return self._in_coords
 
     @property
     def out_coords(self):
+        """[n_out, num_dims] float32 coordinates of output (unbatched)."""
         return self._out_coords
 
     @property
     def neighbors(self):
+        """[n_out, k?] int64 neighborhood indices (unbatched)."""
         return self._neighbors
 
     @property
     def rel_coords(self):
+        """[n_out, k?, 3] float32 relative coordinates (unbatched)."""
         if self._rel_coords is None:
             self._rel_coords = cloud.get_relative_coords(
                 self.in_coords, self.out_coords, self.neighbors)
@@ -43,6 +71,7 @@ class Neighborhood(object):
 
     @property
     def dist2(self):
+        """[n_out, k?] float32 squared relative distances."""
         if self._dist2 is None:
             layer = tf.keras.layers.Lambda(
                 _dist2, arguments=dict(axis=-1, keepdims=True))
@@ -51,6 +80,7 @@ class Neighborhood(object):
 
     @property
     def transpose(self):
+        """Get the transposed neighborhood."""
         if self.is_in_place:
             return self
         if not hasattr(self, '_transpose') or self._transpose is None:
@@ -59,10 +89,24 @@ class Neighborhood(object):
 
     @property
     def is_in_place(self):
+        """True if the input coordinates are the same as output coordinates."""
         return self.in_coords is self.out_coords
 
     @property
     def offset_batched_neighbors(self):
+        """
+        [B, n?, k?] offset index into flattened input batched cloud features.
+
+        For point cloud features of size [B, n?, ...],
+        `tf.gather(features.values, offset_batched_neighbors)` will give the
+        same result as
+        ```
+        tf.map(lambda features, batched_neighbors:
+                tf.gather(features, batched_neighbors))
+        ```
+
+        The returned value is a model input.
+        """
         if self._offset_batched_neighbors is None:
             row_length = utils.leading_dim(self.in_coords)
             row_lengths = b.batched(row_length)

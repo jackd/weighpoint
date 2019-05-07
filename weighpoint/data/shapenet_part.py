@@ -92,7 +92,7 @@ class ShapenetPartProblem(problems.TfdsProblem):
         if isinstance(map_fn, dict):
             map_fn = map_fn[split]
         # if split == tfds.Split.TRAIN:
-        dataset = dataset.repeat().shuffle(self._shuffle_buffer)
+        dataset = dataset.shuffle(self._shuffle_buffer)
 
         def actual_map_fn(inputs, labels):
             inputs, labels = initial_map_fn(inputs, labels)

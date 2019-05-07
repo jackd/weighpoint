@@ -21,6 +21,8 @@ def batch_norm(x, training=None, scale=True):
 
 @gin.configurable(blacklist=['x'])
 def dropout(x, rate=0.5, training=None):
+    if rate is None:
+        return x
     return tf.keras.layers.Dropout(rate)(x, training=training)
 
 

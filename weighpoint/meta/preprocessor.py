@@ -1,3 +1,10 @@
+"""
+Provides an easy interface to combine
+* prebatch mapping
+* batching (either padded or regular, depending on input/output specs)
+* postbatch mapping
+"""
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -79,16 +86,24 @@ class Preprocessor(object):
     def postbatch_map(self, inputs, labels):
         return self.map_batched_inputs(inputs), labels
 
-    def map_and_batch(
-            self, dataset, batch_size, num_parallel_calls=None,
-            padding_value_fn=default_padding_value, batch_kwargs={}):
-        dataset = dataset.map(
-            self.prebatch_map, num_parallel_calls=num_parallel_calls)
+    def batch(
+            self, dataset, batch_size, padding_value_fn=default_padding_value,
+            batch_kwargs=None):
+        if batch_kwargs is None:
+            batch_kwargs = {}
         padding_values = tf.nest.map_structure(
             padding_value_fn, dataset.output_types)
         dataset = batch_dataset(
             dataset, batch_size=batch_size, padding_values=padding_values,
             **batch_kwargs)
+        return dataset
+
+    def map_and_batch(
+            self, dataset, batch_size, num_parallel_calls=None,
+            padding_value_fn=default_padding_value, batch_kwargs=None):
+        dataset = dataset.map(
+            self.prebatch_map, num_parallel_calls=num_parallel_calls)
+        dataset = self.batch(dataset, batch_size)
         dataset = dataset.map(
             self.postbatch_map, num_parallel_calls=num_parallel_calls)
         return dataset

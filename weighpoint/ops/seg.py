@@ -113,7 +113,7 @@ def segmentation_logits(
     # encoder
     for i, (radius2, pp_radius2) in enumerate(zip(radii2, pp_radii2)):
         neighbors, sample_rate = query_fn(
-            coords, pp_radius2, name='query%d' % i, include_sample_rate=True)
+            coords, pp_radius2, name='query%d' % i)
         if not isinstance(radius2, tf.Tensor):
             radius2 = utils.constant(radius2, dtype=tf.float32)
         neighborhood = n.InPlaceNeighborhood(coords, neighbors)
