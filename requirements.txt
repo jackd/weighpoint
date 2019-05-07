@@ -1,4 +1,5 @@
 scipy
 sklearn
+tqdm
 git+git://github.com/jackd/gin-config@tf2
 git+git://github.com/jackd/datasets@modelnet

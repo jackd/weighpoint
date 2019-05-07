@@ -5,10 +5,13 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import numpy as np
 import tensorflow as tf
+from absl import logging
 import gin
 from weighpoint import callbacks as cb
 from weighpoint.meta import builder as b
+from tqdm import tqdm
 
 
 @gin.configurable
@@ -17,6 +20,7 @@ def train(
         callbacks=None, verbose=True, checkpoint_freq=None,
         summary_freq=None, save_config=True, lr_schedule=None):
     # need to run in graph mode for reinitializable iterators
+    assert(not tf.executing_eagerly())
     if model_dir is not None:
         model_dir = os.path.expanduser(model_dir)
     datasets = {k: problem.get_dataset(
@@ -123,5 +127,82 @@ def evaluate(
                 tf.data.experimental.AUTOTUNE)
 
     dataset = preprocess_dataset(dataset)
-    exit()
     model.evaluate(dataset, steps=validation_steps)
+
+
+@gin.configurable
+def confusion(
+        model_dir, problem, batch_size, logits_meta_fn,
+        overwrite=False, split='train'):
+    # need to run in graph mode for reinitializable iterators
+    if model_dir is not None:
+        model_dir = os.path.expanduser(model_dir)
+    path = os.path.join(model_dir, 'confusion-%s.npy' % split)
+    if not overwrite and os.path.isfile(path):
+        logging.info('Found existing confusion matrix at %s' % path)
+        return np.load(path)
+
+    logging.info('Computing confusion matrix...')
+
+    assert(not tf.executing_eagerly())
+    if model_dir is not None:
+        model_dir = os.path.expanduser(model_dir)
+    # datasets = {k: problem.get_dataset(
+    #                 split=k, batch_size=None, prefetch=False)
+    #             for k in ('train', 'validation')}
+    dataset = problem.get_dataset(split=split, batch_size=None, prefetch=False)
+
+    builder = b.MetaNetworkBuilder()
+    with builder:
+        inputs = builder.prebatch_inputs_from(dataset)
+        logits = logits_meta_fn(inputs, problem.output_spec())
+    if isinstance(logits, tf.RaggedTensor):
+        assert(logits.ragged_rank == 1)
+        logits = logits.values
+
+    preprocessor = builder.preprocessor()
+    model = builder.model((logits,))
+
+    train_steps_per_epoch = problem.examples_per_epoch('train') // batch_size
+    examples = problem.examples_per_epoch(split)
+    steps = examples // batch_size
+    if examples % batch_size > 0:
+        steps += 1
+    saver_callback = cb.SaverCallback(model_dir, train_steps_per_epoch)
+
+    def preprocess_dataset(dataset):
+        num_parallel_calls = tf.data.experimental.AUTOTUNE
+        return preprocessor.map_and_batch(
+            dataset,
+            batch_size=batch_size,
+            num_parallel_calls=num_parallel_calls).prefetch(
+                tf.data.experimental.AUTOTUNE)
+
+    num_classes = problem.output_spec().shape[-1]
+    confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
+    dataset = preprocess_dataset(dataset)
+    iterator = tf.compat.v1.data.make_initializable_iterator(dataset)
+    initializer = iterator.initializer
+    inputs, labels = iterator.get_next()
+    logits = model(tf.nest.flatten(inputs))
+    pred = tf.argmax(logits, axis=-1)
+
+    sess = tf.compat.v1.keras.backend.get_session()
+    saver_callback.restore()
+    if saver_callback.last_saved_epoch() is None:
+        raise RuntimeError('No saved data found in %s' % model_dir)
+
+    try:
+        sess.run(initializer)
+        tf.keras.backend.set_learning_phase(0)
+        for i in tqdm(range(steps)):
+            pred_np, labels_np = sess.run([pred, labels])
+            for p, l in zip(pred_np, labels_np):
+                confusion[p, l] += 1
+        sess.run([pred, labels])
+        raise RuntimeError('step count incorrect')
+    except tf.errors.OutOfRangeError:
+        pass
+    logging.info('Confusion matrix calculation complete. Saving to %s' % path)
+    np.save(path, confusion)
+    return confusion
