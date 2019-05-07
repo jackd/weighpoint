@@ -45,16 +45,6 @@ def assert_all_tensors(args):
             raise ValueError('expected all tensors, but arg %d is %s' % (i, a))
 
 
-def _feed(tensor, registry):
-    if not isinstance(tensor, (tf.Tensor, tf.Variable)):
-        raise ValueError(
-            'tensor must be a tensor or variable, got %s' % str(tensor))
-    inp = tf.keras.layers.Input(
-        shape=tensor.shape, dtype=tensor.dtype, batch_size=1)
-    registry.append((inp, tensor))
-    return tf.squeeze(inp, axis=0)
-
-
 class Marks(object):
     PREBATCH = 0
     BATCHED = 1
