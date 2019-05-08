@@ -77,8 +77,10 @@ class TfdsProblem(Problem):
         self._output_spec = output_spec
         self._map_fn = map_fn
         self._as_supervised = as_supervised
-        self._shuffle_buffer = shuffle_buffer
         self._download_and_prepare = download_and_prepare
+        if shuffle_buffer is None:
+            shuffle_buffer = self.examples_per_epoch('train')
+        self._shuffle_buffer = shuffle_buffer
 
     def _supervised_feature(self, index):
         info = self.builder.info

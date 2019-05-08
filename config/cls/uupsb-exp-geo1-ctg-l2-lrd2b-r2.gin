@@ -1,0 +1,33 @@
+# uup-exp-geo1-ctg-l2-elrd99
+# PCA aligned uu dataset and max shuffle buffer (uupsb)
+# 1st order geometric polynomial
+# coordinate transform, continuous truncated gaussian weight function,
+# l2 regularization and exponential learning rate decay with factor
+# 0.99
+include 'base.gin'
+
+include 'problems/uu.gin'
+include 'problems/pca.gin'
+include '../elrd99.gin'
+ModelnetProblem.shuffle_buffer = None
+
+batch_size = 32
+
+scale_coords = False
+
+r0 = 0.2
+
+initial_filters = (16,)
+
+global_units = 'combined'
+
+include '../poly.gin'
+poly = 'geo'
+polynomial_transformer.max_order = 1
+
+include '../ctg.gin'
+
+layers.Dense.kernel_regularizer = @tf.keras.regularizers.l2()
+tf.keras.regularizers.l2.l = 4e-5
+
+epochs = 200
