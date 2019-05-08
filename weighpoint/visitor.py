@@ -84,7 +84,8 @@ class ComponentsToNumpy(ComponentsToRagged):
     def visit_ragged_components(self, obj):
         from weighpoint.np_utils import ragged_array
         if len(obj.nested_row_splits) > 1:
-            raise NotImplementedError('TODO')
+            ragged_array.RaggedArray.from_nested_row_splits(
+                self.visit(obj.flat_values), self.visit(obj.nested_row_splits))
         return ragged_array.RaggedArray.from_row_splits(
             self.visit(obj.flat_values), self.visit(obj.nested_row_splits[0]))
 

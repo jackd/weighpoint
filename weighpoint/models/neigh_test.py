@@ -164,7 +164,7 @@ class NeighborhoodTest(RaggedTestCase):
             self.assertRaggedEqual(simple_obn, trans_obn)
             self.assertRaggedEqual(simple_coords, trans_coords)
             self.assertEqual(
-                simple_obn.nested_row_splits[-1].shape[0]-1,
+                simple_obn.nested_row_splits[-1][-1],
                 sum(d.shape[0] for d in np_data))
 
 

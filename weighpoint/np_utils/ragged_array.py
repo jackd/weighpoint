@@ -2,7 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 import numpy as np
-import scipy.sparse as sp
+# import scipy.sparse as sp
 
 
 class RaggedArray(object):
@@ -15,7 +15,7 @@ class RaggedArray(object):
     included.
     """
     def __init__(
-            self, flat_values=None, row_lengths=None, ragged_lists=None,
+            self, values=None, row_lengths=None, ragged_lists=None,
             row_splits=None, csr_mat=None, leading_dim=None, internal=False):
         """
         For internal use only.
@@ -26,11 +26,16 @@ class RaggedArray(object):
             RaggedArray.from_row_splits
         """
         assert(internal)
-        self._flat_values = flat_values
+        self._values = values
         self._row_lengths = row_lengths
         self._row_splits = row_splits
         self._ragged_lists = ragged_lists
         self._leading_dim = leading_dim
+
+    @staticmethod
+    def from_ragged_tensor_value(self, ragged_tensor_value):
+        return RaggedArray.from_row_splits(
+            ragged_tensor_value.values, ragged_tensor_value.row_splits)
 
     @staticmethod
     def from_ragged_lists(ragged_lists, dtype=np.float32):
@@ -45,28 +50,46 @@ class RaggedArray(object):
             leading_dim=row_lengths.size, internal=True)
 
     @staticmethod
-    def from_row_lengths(flat_values, row_lengths):
-        flat_values = np.asarray(flat_values)
+    def from_row_lengths(values, row_lengths):
+        values = np.asarray(values)
         row_lengths = np.asarray(row_lengths)
         return RaggedArray(
-            flat_values=flat_values, row_lengths=row_lengths,
+            values=values, row_lengths=row_lengths,
             leading_dim=row_lengths.size, internal=True)
 
     @staticmethod
+    def from_nested_row_splits(values, nested_row_splits):
+        for row_splits in nested_row_splits[-1::-1]:
+            values = RaggedArray.from_row_splits(values, row_splits)
+        return values
+
+    @staticmethod
+    def from_nested_row_lengths(values, nested_row_lengths):
+        for row_lengths in nested_row_lengths[-1::-1]:
+            values = RaggedArray.from_row_lengths(values, row_lengths)
+        return values
+
+    @staticmethod
     def from_row_splits(
-            flat_values, row_splits, values_dtype=None, splits_dtype=np.int64):
-        flat_values = np.asarray(flat_values, dtype=values_dtype)
+            values, row_splits, values_dtype=None, splits_dtype=np.int64):
+        if isinstance(values, (np.ndarray, list, tuple)):
+            values = np.asarray(values, dtype=values_dtype)
+        else:
+            assert(isinstance(values, RaggedArray))
         row_splits = np.asarray(row_splits, dtype=splits_dtype)
         return RaggedArray(
-            flat_values=flat_values, row_splits=row_splits,
+            values=values, row_splits=row_splits,
             leading_dim=row_splits.size - 1, internal=True)
 
     @property
     def ragged_lists(self):
         if self._ragged_lists is None:
-            flat_values = self._flat_values
+            values = self.values
             row_splits = self.row_splits
-            self._ragged_lists = np.split(flat_values, row_splits[1:-1])
+            if isinstance(values, RaggedArray):
+                raise NotImplementedError()
+            else:
+                self._ragged_lists = np.split(values, row_splits[1:-1])
         return self._ragged_lists
 
     @property
@@ -93,15 +116,18 @@ class RaggedArray(object):
     @property
     def values(self):
         """Alias to be consistent with tensorflow."""
-        return self.flat_values
+        return self._values
 
     @property
     def flat_values(self):
-        return self._flat_values
+        values = self.values
+        while isinstance(values, RaggedArray):
+            values = values.values
+        return values
 
     @property
     def size(self):
-        return self._flat_values.size
+        return self.flat_values.size
 
     @property
     def leading_dim(self):
@@ -109,23 +135,23 @@ class RaggedArray(object):
 
     @property
     def shape(self):
-        return (self.leading_dim, None) + self._flat_values.shape[1:]
+        return (self.leading_dim, None) + self._values.shape[1:]
 
     def __len__(self):
         return self.leading_dim
 
     def mask(self, boolean_mask):
-        assert(
-            isinstance(boolean_mask, np.ndarray) and
-            boolean_mask.dtype == np.bool)
-        indices = np.arange(self.size)
-        mat = sp.csr_matrix((self.values, indices, self.row_splits))
-        mat = mat[boolean_mask]
-        mat.sort_indices()
-        return RaggedArray.from_row_splits(mat.data, mat.indptr)
-        # ragged_lists = [
-        #     r for r, m in zip(self.ragged_lists, boolean_mask) if m]
-        # return RaggedArray.from_ragged_lists(ragged_lists, dtype=self.dtype)
+        # assert(
+        #     isinstance(boolean_mask, np.ndarray) and
+        #     boolean_mask.dtype == np.bool)
+        # indices = np.arange(self.size)
+        # mat = sp.csr_matrix((self.values, indices, self.row_splits))
+        # mat = mat[boolean_mask]
+        # mat.sort_indices()
+        # return RaggedArray.from_row_splits(mat.data, mat.indptr)
+        ragged_lists = [
+            r for r, m in zip(self.ragged_lists, boolean_mask) if m]
+        return RaggedArray.from_ragged_lists(ragged_lists, dtype=self.dtype)
 
     def gather(self, indices):
         ragged_lists = self.ragged_lists
@@ -144,7 +170,7 @@ class RaggedArray(object):
                 np.issubdtype(indices.dtype, np.integer)):
             row_splits = self.row_splits
             i = indices
-            return self._flat_values[row_splits[i]: row_splits[i+1]]
+            return self.values[row_splits[i]: row_splits[i+1]]
         elif isinstance(indices, np.ndarray):
             if indices.dtype == np.bool:
                 return self.mask(indices)
@@ -156,7 +182,7 @@ class RaggedArray(object):
             assert(isinstance(indices, tuple))
             i, j = indices[:2]
             start = self.row_splits[i]
-            out = self._flat_values[start: start + j]
+            out = self._values[start: start + j]
             if len(indices) > 2:
                 return out[indices[2:]]
             else:
@@ -167,8 +193,22 @@ class RaggedArray(object):
 
     @property
     def dtype(self):
-        return self._flat_values.dtype
+        return self.values.dtype
 
     @property
     def nested_row_splits(self):
-        return [self.row_splits]
+        out = [self.row_splits]
+        values = self.values
+        while isinstance(values, RaggedArray):
+            out.append(self.row_splits)
+            values = values.values
+        return out
+
+    @property
+    def nested_row_lengths(self):
+        out = [self.row_lengths]
+        values = self.values
+        while isinstance(values, RaggedArray):
+            out.append(self.row_lengths)
+            values = values.values
+        return out

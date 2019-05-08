@@ -87,7 +87,7 @@ def reverse_query_ball(ragged_array, size=None, data=None):
     arr_rev, rel_dists_inv = tree_utils.reverse_query_ball(
         arr, na, rel_dists)
     np.testing.assert_allclose(
-        np.linalg.norm(rel_coords_inv, axis=-1), rel_dists_inv)
+        np.linalg.norm(rel_coords_inv, axis=-1), rel_dists)
 
     naive_arr_rev = tree_utils.query_ball_tree(out_tree, in_tree, radius)
 
@@ -123,6 +123,7 @@ def reverse_query_ball(ragged_array, size=None, data=None):
     mat = sp.csr_matrix(
             (data, ragged_array.flat_values, ragged_array.row_splits))
     trans = mat.transpose().tocsr()
+    trans.sort_indices()
     row_splits = trans.indptr
     if size is not None:
         diff = size - row_splits.size + 1
@@ -131,4 +132,4 @@ def reverse_query_ball(ragged_array, size=None, data=None):
                 (diff,), dtype=row_splits.dtype)
             row_splits = np.concatenate([row_splits, tail], axis=0)
     ragged_out = RaggedArray.from_row_splits(trans.indices, row_splits)
-    return ragged_out, data
+    return ragged_out, trans.data

@@ -66,12 +66,11 @@ TODO
 
 ## Segmentation
 
-Work ongoing. Known bug in `tree_utils` associated with `reverse_query_ball`.
+Work ongoing.
 
 ## Point Cloud Generation
 
 Work ongoing
 
 ## Issues
-* `reverse_query_ball` tests are failing - likely the cause of random guess performance in segmentation
 * Saving in tf 2.0
