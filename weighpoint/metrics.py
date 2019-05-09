@@ -7,15 +7,11 @@ from tensorflow.python.keras.metrics import squeeze_or_expand_dimensions
 import weighpoint.tf_compat  # noqa
 
 
-def padded_sparse_categorical_accuracy(y_true, y_pred, padding_value=-1):
-    # assumes y_true is padded, y_pred is flat_values
-    y_true = tf.boolean_mask(y_true, tf.not_equal(y_true, padding_value))
-    return tf.keras.metrics.sparse_categorical_accuracy(y_true, y_pred)
-
-
 class IntersectionOverUnion(tf.keras.metrics.Metric):
-    def __init__(self, threshold=0.0, name='iou', dtype=None):
+    def __init__(
+            self, threshold=0.0, ignore_weights=False, name='iou', dtype=None):
         super(IntersectionOverUnion, self).__init__(name=name, dtype=dtype)
+        self.ignore_weights = ignore_weights
         self.threshold = threshold
         self.intersection = self.add_weight(
             'intersection',
@@ -30,6 +26,7 @@ class IntersectionOverUnion(tf.keras.metrics.Metric):
         config = super(IntersectionOverUnion, self).get_config()
         assert('threshold' not in config)
         config['threshold'] = self.threshold
+        config['ignore_weights'] = self.ignore_weights
         return config
 
     def update_state(self, y_true, y_pred, sample_weight=None):
@@ -44,7 +41,7 @@ class IntersectionOverUnion(tf.keras.metrics.Metric):
         intersection = tf.cast(tf.logical_and(y_true, y_pred), self._dtype)
         union = tf.cast(tf.logical_or(y_true, y_pred), self._dtype)
 
-        if sample_weight is not None:
+        if sample_weight is not None and not self.ignore_weights:
             intersection = intersection * sample_weight
             union = union * sample_weight
 
@@ -57,76 +54,57 @@ class IntersectionOverUnion(tf.keras.metrics.Metric):
         return self.intersection / self.union
 
 
-class MeanIntersectionOverUnion(tf.keras.metrics.Metric):
-    def __init__(self, num_classes, name='mIoU', dtype=None):
-        super(MeanIntersectionOverUnion, self).__init__(
-            name=name, dtype=dtype)
-        self.num_classes = num_classes
-        self.ious = tuple(IntersectionOverUnion(
-                threshold=None, name='iou%d' % i, dtype=dtype)
-            for i in range(num_classes))
+class IndividualIntersectionOverUnion(IntersectionOverUnion):
+    def __init__(self, index, **kwargs):
+        self._index = index
+        super(IndividualIntersectionOverUnion, self).__init__(
+            threshold=None, **kwargs)
 
     def get_config(self):
-        config = super(MeanIntersectionOverUnion, self).get_config()
-        assert('num_classes' not in config)
-        config['num_classes'] = self.threshold
+        config = super(IndividualIntersectionOverUnion, self).get_config()
+        config['index'] = self._index
         return config
-
-    def probs_to_preds(self, y_true, y_pred):
-        assert(y_pred.dtype.is_floating)
-        y_pred = tf.argmax(y_pred, axis=-1)
-        return y_true, y_pred
-
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        y_pred, y_true, sample_weight = squeeze_or_expand_dimensions(
-            y_pred, y_true, sample_weight)
-        y_true, y_pred = self.probs_to_preds(y_true, y_pred)
-        updates = []
-        for i, iou in enumerate(self.ious):
-            updates.append(iou.update_state(
-                tf.equal(y_true, i), tf.equal(y_pred, i), sample_weight))
-        return tf.group(updates)
-
-    def result(self):
-        return tf.reduce_mean([iou.result() for iou in self.ious])
-
-
-class PaddedMetric(tf.keras.metrics.Metric):
-    def __init__(self, base_metric, padding_value=-1, name=None):
-        if not isinstance(base_metric, tf.keras.metrics.Metric):
-            base_metric = tf.keras.metrics.Metric.from_config(base_metric)
-        if name is None:
-            name = 'padded-%s' % (base_metric.name)
-        super(PaddedMetric, self).__init__(name=name, dtype=base_metric.dtype)
-        self._base_metric = base_metric
-        self._padding_value = padding_value
-
-    def get_config(self):
-        config = super(PaddedMetric, self).get_config()
-        assert(not any(k in config for k in ('base_metric', 'padding_value')))
-        config['padding_value'] = self._padding_value
-        config['base_metric'] = self._base_metric.get_config()
 
     def update_state(self, y_true, y_pred, sample_weight=None):
         if sample_weight is not None:
             raise NotImplementedError()
-        y_true = tf.boolean_mask(
-            y_true, tf.not_equal(y_true, self._padding_value))
-        y_true = tf.expand_dims(y_true, axis=-1)
-        return self._base_metric.update_state(y_true, y_pred)
+        y_pred, y_true, sample_weight = squeeze_or_expand_dimensions(
+            y_pred, y_true, sample_weight)
+        y_true = tf.cast(y_true, tf.int64)
+        y_pred = tf.equal(tf.argmax(y_pred, axis=-1), self._index)
+        y_true = tf.equal(y_true, self._index)
+        return super(IndividualIntersectionOverUnion, self).update_state(
+            y_true, y_pred, sample_weight)
+
+
+class MeanIntersectionOverUnion(tf.keras.metrics.Metric):
+    def __init__(
+            self, num_classes, ignore_weights=False, name='mIoU', dtype=None):
+        super(MeanIntersectionOverUnion, self).__init__(
+            name=name, dtype=dtype)
+        self.num_classes = num_classes
+        self.ignore_weights = ignore_weights
+        self.ious = tuple(IntersectionOverUnion(
+                threshold=None, name='iou%d' % i, dtype=dtype,
+                ignore_weights=ignore_weights)
+            for i in range(num_classes))
+
+    def get_config(self):
+        config = super(MeanIntersectionOverUnion, self).get_config()
+        assert(all(k not in config for k in ('num_classes', 'ignore_weights')))
+        config['num_classes'] = self.num_classes
+        config['ignore_weights'] = self.ignore_weights
+        return config
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_pred, y_true, sample_weight = squeeze_or_expand_dimensions(
+            y_pred, y_true, sample_weight)
+        y_pred = tf.argmax(y_pred, axis=-1)
+        updates = []
+        for i, iou in enumerate(self.ious):
+            updates.append(iou.update_state(
+                tf.equal(y_true, i), tf.equal(y_pred, i), sample_weight))
+        return tf.group(tf.nest.flatten(updates))
 
     def result(self):
-        return self._base_metric.result()
-
-
-def PaddedSparseCategoricalAccuracy(padding_value=-1, dtype=None):
-    return PaddedMetric(
-        tf.keras.metrics.SparseCategoricalAccuracy(dtype=dtype),
-        padding_value=padding_value)
-
-
-def PaddedMeanIntersectionOverUnion(
-        num_classes, padding_value=-1, dtype=None):
-    return PaddedMetric(
-        MeanIntersectionOverUnion(num_classes, dtype=dtype),
-        padding_value=padding_value)
+        return tf.reduce_mean(tf.stack([iou.result() for iou in self.ious]))

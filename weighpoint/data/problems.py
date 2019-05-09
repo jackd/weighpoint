@@ -6,10 +6,16 @@ import abc
 import six
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from weighpoint.meta import builder as b
 
 import gin
 
 InputSpec = tf.keras.layers.InputSpec
+
+SparseCategoricalCrossentropy = gin.config.external_configurable(
+    tf.keras.losses.SparseCategoricalCrossentropy,
+    name='SparseCategoricalCrossentropy'
+)
 
 
 def dataset_spec(dataset, has_batch_dim=False):
@@ -21,6 +27,15 @@ def dataset_spec(dataset, has_batch_dim=False):
             return InputSpec(shape=shape, dtype=dtype)
     return tf.nest.map_structure(
         f, dataset.output_shapes, dataset.output_types)
+
+
+_problems = []
+
+
+def get_current_problem():
+    if len(_problems) == 0:
+        raise RuntimeError('No problem context blocks opened')
+    return _problems[0]
 
 
 class Problem(object):
@@ -57,6 +72,18 @@ class Problem(object):
     def target_spec(self):
         """`target` means label."""
         return self.dataset_spec()[1]
+
+    def __enter__(self):
+        _problems.append(self)
+
+    def __exit__(self, *args, **kwargs):
+        out = _problems.pop()
+        assert(out is self)
+
+    def preprocess_labels(self, labels, weights=None):
+        if weights is not None:
+            return tf.nest.map_structure(b.batched, (labels, weights))
+        return tf.nest.map_structure(b.batched, labels), weights
 
 
 @gin.configurable(module='problems')

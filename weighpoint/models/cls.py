@@ -86,8 +86,7 @@ def cls_head(
         radii2 = unscaled_radii2 * (r0**2)
 
     def maybe_feed(r2):
-        is_tensor_or_var = isinstance(r2, (tf.Tensor, tf.Variable))
-        if is_tensor_or_var:
+        if isinstance(r2, (tf.Tensor, tf.Variable)):
             return b.prebatch_feed(tf.keras.layers.Lambda(tf.sqrt)(radius2))
         else:
             return np.sqrt(r2)

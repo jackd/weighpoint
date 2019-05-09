@@ -63,6 +63,8 @@ def rotate(positions, normals=None, angle=None):
     """See _rotate. `angle` may also be 'pca-xy'."""
     if angle == 'pca-xy':
         angle = get_pca_xy_angle(positions)
+    if angle == 0:
+        return positions, normals
     return _rotate(positions, normals, angle, tf)
 
 

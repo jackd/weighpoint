@@ -41,7 +41,7 @@ dataset = dataset.repeat().shuffle(buffer_size).map(
     lambda inputs, labels: prebatch_preprocess(inputs), labels).batch(
         batch_size).prefetch(tf.data.experimental.AUTOTUNE)
 
-inputs = tf.nest.map_structure(
+inputs, labels = tf.nest.map_structure(
     lambda s, d: tf.keras.layers.Input(shape=s, dtype=d),
     dataset.output_shapes, dataset.output_types)
 
@@ -55,7 +55,7 @@ This can be done using this module as follows.
 from weighpoint.meta import builder as b
 dataset = get_original_dataset(...)
 
-inputs = b.prebatch_inputs_from(dataset)
+inputs, labels = b.prebatch_inputs_from(dataset)
 x = inputs
 x, layer1_prep_inputs = layer1_builder.prebatch_map(x)
 _, layer2_prep_inputs = layer2_builder.prebatch_map(x)
@@ -69,7 +69,7 @@ batched_x = layer1_builder.network_fn(batched_x, batched_layer1_prep_inputs)
 batched_x = layer2_builder.network_fn(batched_x, batched_layer2_prep_inputs)
 
 model = b.model(batched_x)
-preprocessor = b.preprocessor()
+preprocessor = b.preprocessor(b.batched(labels))
 
 dataset = preprocessor.map_and_batch(
     dataset.repeat().shuffle(buffer_size)).prefetch(
@@ -132,47 +132,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
-import six
 import tensorflow as tf
 from weighpoint.meta import preprocessor as p
 from weighpoint.layers import utils
 from weighpoint.layers import ragged
 from weighpoint.tf_compat import dim_value
-
-
-def is_namedtuple(x):
-    return (isinstance(x, tuple) and
-            isinstance(getattr(x, '__dict__', None), collections.Mapping) and
-            getattr(x, '_fields', None) is not None)
-
-
-def yield_flat_paths(nest):
-    """tf.nest.yield_flat_paths isn't in tf 1.14 or 2.0."""
-    if isinstance(nest, (dict, collections.Mapping)):
-        for key in sorted(nest):
-            value = nest[key]
-            for sub_path in yield_flat_paths(value):
-                yield (key,) + sub_path
-    elif is_namedtuple(nest):
-        for key in nest._fields:
-            value = getattr(nest, key)
-            for sub_path in yield_flat_paths(value):
-                yield (key,) + sub_path
-    elif isinstance(nest, six.string_types):
-        yield ()
-    elif isinstance(nest, collections.Sequence):
-        for idx, value in enumerate(nest):
-            for sub_path in yield_flat_paths(value):
-                yield (idx,) + sub_path
-    else:
-        yield ()
-
-
-def assert_all_tensors(args):
-    for i, a in enumerate(args):
-        if not isinstance(a, tf.Tensor):
-            raise ValueError('expected all tensors, but arg %d is %s' % (i, a))
+from weighpoint.meta import utils as meta_utils
 
 
 class Marks(object):
@@ -187,8 +152,9 @@ class Marks(object):
     PREBATCH = 0
     BATCHED = 1
     MODEL = 2
+    LABEL = 3
 
-    _strings = ('prebatch', 'batched', 'model')
+    _strings = ('prebatch', 'batched', 'model', 'label')
 
     @classmethod
     def to_string(cls, mark):
@@ -203,7 +169,7 @@ class MetaNetworkBuilder(object):
         self._prebatch_outputs = []
         self._prebatch_feeds = []
         self._batched_inputs = []
-        self._batched_outputs = []
+        self._batched_feature_outputs = []
         self._model_inputs = []
 
         self._prebatch_feed_dict = {}
@@ -225,8 +191,12 @@ class MetaNetworkBuilder(object):
             raise RuntimeError(
                 'self not on top of stack when attempting to exit')
 
-    def preprocessor(self):
+    def preprocessor(self, labels, weights=None):
         """Get a `weighpoint.meta.preprocessor.Preprocessor`."""
+        if isinstance(labels, tf.Tensor):
+            labels = (labels,)
+        if isinstance(weights, tf.Tensor):
+            weights = (weights,)
         prebatch_feed_values = tuple(self._prebatch_feed_dict.keys())
         prebatch_feed_inputs = tuple(
             self._prebatch_feed_dict[k] for k in prebatch_feed_values)
@@ -235,12 +205,14 @@ class MetaNetworkBuilder(object):
             tuple(self._prebatch_outputs),
             prebatch_feed_inputs, prebatch_feed_values,
             tuple(self._batched_inputs),
-            tuple(self._batched_outputs),
+            tuple(self._batched_feature_outputs),
+            labels,
+            weights,
         )
 
     def model(self, outputs):
         """Get the learned model with the given outputs."""
-        assert_all_tensors(outputs)
+        meta_utils.assert_all_tensors(outputs)
         return tf.keras.models.Model(
             inputs=tuple(self._model_inputs),
             outputs=tuple(outputs))
@@ -310,12 +282,12 @@ class MetaNetworkBuilder(object):
         Returns:
             `tf.keras.layers.Input` associated with each tensor of`features`.
         """
-        types = dataset.output_types[0]
+        types = dataset.output_types
         # ensure inputs are added in the correct order
-        flat_shapes = tf.nest.flatten(dataset.output_shapes[0])
+        flat_shapes = tf.nest.flatten(dataset.output_shapes)
         flat_types = tf.nest.flatten(types)
         names = ['-'.join([str(pi) for pi in p]) for p in
-                 yield_flat_paths(dataset.output_shapes[0])]
+                 meta_utils.yield_flat_paths(dataset.output_shapes)]
         inputs = tuple(
             self.prebatch_input(s, t, name=n) for s, t, n in zip(
                 flat_shapes, flat_types, names))
@@ -415,7 +387,7 @@ class MetaNetworkBuilder(object):
         if tensor in self._model_inputs_dict:
             return self._model_inputs_dict[tensor]
         self._mark(tensor, Marks.BATCHED)
-        self._batched_outputs.append(tensor)
+        self._batched_feature_outputs.append(tensor)
         inp = tf.keras.layers.Input(shape=tensor.shape[1:], dtype=tensor.dtype)
         self._model_inputs.append(inp)
         self._mark(inp, Marks.MODEL)
@@ -473,9 +445,9 @@ def as_batched_model_input(tensor):
     return _builder_stack[-1].as_batched_model_input(tensor)
 
 
-def preprocessor():
+def preprocessor(labels):
     """See `MetaNetworkBuilder.preprocessor`."""
-    return _builder_stack[-1].preprocessor()
+    return _builder_stack[-1].preprocessor(labels)
 
 
 def model(outputs):

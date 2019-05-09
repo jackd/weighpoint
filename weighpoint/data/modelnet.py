@@ -14,11 +14,6 @@ from weighpoint.np_utils import sample
 
 import weighpoint.tf_compat  # noqa
 
-SparseCategoricalCrossentropy = gin.config.external_configurable(
-    tf.keras.losses.SparseCategoricalCrossentropy,
-    name='SparseCategoricalCrossentropy'
-)
-
 DEFAULT_SEED = 123
 
 
@@ -252,7 +247,8 @@ class ModelnetProblem(problems.TfdsProblem):
             shuffle_buffer=1024, download_and_prepare=True,
             min_points=256, alt_split_percent=None):
         if loss is None:
-            loss = SparseCategoricalCrossentropy(from_logits=True)
+            loss = problems.SparseCategoricalCrossentropy(
+                from_logits=True)
         self._min_points = min_points
         self._alt_split_percent = alt_split_percent
         super(ModelnetProblem, self).__init__(

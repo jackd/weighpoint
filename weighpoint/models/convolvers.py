@@ -145,11 +145,15 @@ class ExpandingConvolver(Convolver):
 
     def global_deconv(
             self, global_features, coord_features, row_splits, filters_out):
-        return conv.flat_expanding_global_deconv(
+        features = conv.flat_expanding_global_deconv(
             global_features,
             utils.flatten_leading_dims(coord_features, 2),
-            row_splits,
-            filters_out)
+            row_splits)
+        if filters_out is not None:
+            features = core.Dense(filters_out)(features)
+        if self._activation is not None:
+            features = self._activation(features)
+        return features
 
 
 @gin.configurable
