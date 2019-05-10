@@ -53,6 +53,11 @@ class IntersectionOverUnion(tf.keras.metrics.Metric):
     def result(self):
         return self.intersection / self.union
 
+    # def reset_states(self):
+    #     return tf.group([
+    #         self.intersection.assign(0.),
+    #         self.union.assign(0.)])
+
 
 class IndividualIntersectionOverUnion(IntersectionOverUnion):
     def __init__(self, index, **kwargs):
@@ -75,6 +80,37 @@ class IndividualIntersectionOverUnion(IntersectionOverUnion):
         y_true = tf.equal(y_true, self._index)
         return super(IndividualIntersectionOverUnion, self).update_state(
             y_true, y_pred, sample_weight)
+
+
+class MetricsMean(tf.keras.metrics.Metric):
+    def __init__(self, metrics, run_metrics=True, name='metrics_mean'):
+        self._metrics = tuple(metrics)
+        assert(all(isinstance(m, tf.keras.metrics.Metric) for m in metrics))
+        self._run_metrics = run_metrics
+        super(MetricsMean, self).__init__(name=name)
+
+    def get_config(self):
+        config = super(MetricsMean, self).get_config()
+        config['metrics'] = [m.get_config() for m in self._metrics]
+        config['run_metrics'] = self._run_metrics
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        if self._run_metrics:
+            return tf.group(
+                [m.update_state(y_true, y_pred, sample_weight)
+                 for m in self._metrics])
+        else:
+            return tf.no_op()
+
+    def reset_states(self):
+        super(MetricsMean, self).reset_states()
+        if self._run_metrics:
+            # return tf.group([m.reset_states() for m in self._metrics])
+            for m in self._metrics:
+                m.reset_states()
+
+    def result(self):
+        return tf.reduce_mean(tf.stack([m.result() for m in self._metrics]))
 
 
 class MeanIntersectionOverUnion(tf.keras.metrics.Metric):
@@ -108,3 +144,10 @@ class MeanIntersectionOverUnion(tf.keras.metrics.Metric):
 
     def result(self):
         return tf.reduce_mean(tf.stack([iou.result() for iou in self.ious]))
+
+    # def reset_states(self):
+    #     return tf.group([iou.reset_states() for iou in self.ious])
+    def reset_states(self):
+        super(MeanIntersectionOverUnion, self).reset_states()
+        for iou in self.ious:
+            iou.reset_states()

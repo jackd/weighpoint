@@ -52,8 +52,10 @@ def segmentation_logits(
         r0=0.1, initial_filters=(16,), initial_activation=seg_activation,
         filters=(32, 64, 128, 256), global_units=512,
         query_fn=core.query_pairs, radii_fn=core.constant_radii,
-        global_deconv_all=True,
+        global_deconv_all=None,
         coords_transform=None, weights_transform=None, convolver=None):
+    if global_deconv_all is None:
+        global_deconv_all = global_units is not None
 
     if convolver is None:
         convolver = c.ExpandingConvolver(activation=seg_activation)
@@ -127,8 +129,6 @@ def segmentation_logits(
             coord_features = coords_transform(neighborhood.out_coords, None)
             global_features.append(convolver.global_conv(
                 features, coord_features, nested_row_splits[-2], filters[i]))
-            global_features = tf.keras.layers.Lambda(
-                tf.concat, arguments=dict(axis=-1))(global_features)
 
         # resample
         if i < n_res - 1:
